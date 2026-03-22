@@ -1,0 +1,14 @@
+# Binary
+/gogcli-mcp
+
+# TLS certs
+.certs/
+
+# IDE
+.idea/
+
+# Superpowers docs
+docs/superpowers/
+
+# macOS
+.DS_Store
