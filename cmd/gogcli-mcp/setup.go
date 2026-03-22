@@ -107,13 +107,28 @@ func runSetup() {
 		issuer = publicURL
 	}
 
-	// Step 5: Install launchd service
-	if err := installLaunchd(configDir, issuer, client); err != nil {
+	// Step 5: Write config file
+	cfgData, _ := json.MarshalIndent(map[string]string{
+		"transport":     "http",
+		"addr":          ":9247",
+		"issuer":        issuer,
+		"client_id":     client.ID,
+		"client_secret": client.Secret,
+	}, "", "  ")
+	cfgPath := filepath.Join(configDir, "config.json")
+	if err := os.WriteFile(cfgPath, cfgData, 0600); err != nil {
+		fmt.Printf("Failed to write config: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("\nConfig written to %s\n", cfgPath)
+
+	// Step 6: Install launchd service
+	if err := installLaunchd(configDir); err != nil {
 		fmt.Printf("Failed to install service: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Step 6: Print summary
+	// Step 7: Print summary
 	fmt.Println()
 	fmt.Println("\u2705 Setup complete!")
 	fmt.Println()
@@ -170,14 +185,8 @@ var startShTmpl = template.Must(template.New("start.sh").Parse(`#!/bin/bash
 set -e
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-export GOG_MCP_TRANSPORT=http
-export GOG_MCP_ADDR=:9247
-export GOG_MCP_ISSUER="{{.Issuer}}"
-export GOG_MCP_CONFIG_DIR="{{.ConfigDir}}"
-export GOG_MCP_CLIENT_ID="{{.ClientID}}"
-export GOG_MCP_CLIENT_SECRET="{{.ClientSecret}}"
 
-exec "{{.Binary}}"
+exec gogcli-mcp
 `))
 
 var plistTmpl = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
@@ -203,15 +212,7 @@ var plistTmpl = template.Must(template.New("plist").Parse(`<?xml version="1.0" e
 </plist>
 `))
 
-func installLaunchd(configDir, issuer string, client *mcpauth.Client) error {
-	binary, err := exec.LookPath("gogcli-mcp")
-	if err != nil {
-		binary, err = os.Executable()
-		if err != nil {
-			return fmt.Errorf("cannot find gogcli-mcp binary: %w", err)
-		}
-	}
-
+func installLaunchd(configDir string) error {
 	home, _ := os.UserHomeDir()
 
 	// Write start.sh
@@ -220,13 +221,7 @@ func installLaunchd(configDir, issuer string, client *mcpauth.Client) error {
 	if err != nil {
 		return err
 	}
-	if err := startShTmpl.Execute(f, map[string]string{
-		"Issuer":       issuer,
-		"ConfigDir":    configDir,
-		"Binary":       binary,
-		"ClientID":     client.ID,
-		"ClientSecret": client.Secret,
-	}); err != nil {
+	if err := startShTmpl.Execute(f, nil); err != nil {
 		f.Close()
 		return fmt.Errorf("writing start.sh: %w", err)
 	}
