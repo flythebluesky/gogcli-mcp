@@ -17,9 +17,15 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
+var version = "dev"
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		runSetup()
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println(version)
 		return
 	}
 	runServer()
@@ -46,7 +52,7 @@ func runServer() {
 
 	s := mcpserver.NewMCPServer(
 		"gogcli-mcp",
-		"0.1.0",
+		version,
 		mcpserver.WithToolCapabilities(false),
 	)
 
