@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -16,6 +17,36 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
+
+type config struct {
+	Transport    string `json:"transport"`
+	Addr         string `json:"addr"`
+	Issuer       string `json:"issuer"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	GogPath      string `json:"gog_path"`
+	TLSCert      string `json:"tls_cert"`
+	TLSKey       string `json:"tls_key"`
+}
+
+// loadConfig reads config.json from configDir. Missing file is not an error.
+func loadConfig(configDir string) config {
+	var cfg config
+	data, err := os.ReadFile(filepath.Join(configDir, "config.json"))
+	if err != nil {
+		return cfg
+	}
+	json.Unmarshal(data, &cfg)
+	return cfg
+}
+
+// envOrConfig returns the env var value if set, otherwise the config file value.
+func envOrConfig(envKey, cfgVal string) string {
+	if v := os.Getenv(envKey); v != "" {
+		return v
+	}
+	return cfgVal
+}
 
 var version = "dev"
 
@@ -32,7 +63,18 @@ func main() {
 }
 
 func runServer() {
-	gogPath := os.Getenv("GOG_PATH")
+	configDir := os.Getenv("GOG_MCP_CONFIG_DIR")
+	if configDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			log.Fatalf("cannot determine home directory: %v", err)
+		}
+		configDir = filepath.Join(home, ".config", "gogcli-mcp")
+	}
+
+	cfg := loadConfig(configDir)
+
+	gogPath := envOrConfig("GOG_PATH", cfg.GogPath)
 	if gogPath == "" {
 		gogPath = "gog"
 	}
@@ -85,25 +127,16 @@ func runServer() {
 
 	fmt.Fprintf(os.Stderr, "gogcli-mcp: registered %d tools from gog %s\n", len(groups), schema.Build)
 
-	transport := os.Getenv("GOG_MCP_TRANSPORT")
+	transport := envOrConfig("GOG_MCP_TRANSPORT", cfg.Transport)
 	if transport == "http" {
-		addr := os.Getenv("GOG_MCP_ADDR")
+		addr := envOrConfig("GOG_MCP_ADDR", cfg.Addr)
 		if addr == "" {
 			addr = ":9247"
 		}
 
-		issuer := os.Getenv("GOG_MCP_ISSUER")
+		issuer := envOrConfig("GOG_MCP_ISSUER", cfg.Issuer)
 		if issuer == "" {
 			issuer = "https://localhost" + addr
-		}
-
-		configDir := os.Getenv("GOG_MCP_CONFIG_DIR")
-		if configDir == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				log.Fatalf("cannot determine home directory: %v", err)
-			}
-			configDir = filepath.Join(home, ".config", "gogcli-mcp")
 		}
 
 		store := mcpauth.NewStore(filepath.Join(configDir, "oauth.json"))
@@ -113,11 +146,11 @@ func runServer() {
 			"https://claude.com/api/mcp/auth_callback",
 		}
 
-		// Register client from env vars if provided.
-		if envID := os.Getenv("GOG_MCP_CLIENT_ID"); envID != "" {
-			if envSecret := os.Getenv("GOG_MCP_CLIENT_SECRET"); envSecret != "" {
-				store.EnsureClient(envID, envSecret, "Claude Co-Work", coworkRedirects)
-			}
+		// Register client from env vars or config if provided.
+		clientID := envOrConfig("GOG_MCP_CLIENT_ID", cfg.ClientID)
+		clientSecret := envOrConfig("GOG_MCP_CLIENT_SECRET", cfg.ClientSecret)
+		if clientID != "" && clientSecret != "" {
+			store.EnsureClient(clientID, clientSecret, "Claude Co-Work", coworkRedirects)
 		}
 
 		// Auto-generate a client if none exist, so the server works out of the box.
@@ -146,11 +179,9 @@ func runServer() {
 			mux.ServeHTTP(w, r)
 		})
 
-		certFile, keyFile, err := server.EnsureCerts(
-			os.Getenv("GOG_MCP_TLS_CERT"),
-			os.Getenv("GOG_MCP_TLS_KEY"),
-			configDir,
-		)
+		tlsCert := envOrConfig("GOG_MCP_TLS_CERT", cfg.TLSCert)
+		tlsKey := envOrConfig("GOG_MCP_TLS_KEY", cfg.TLSKey)
+		certFile, keyFile, err := server.EnsureCerts(tlsCert, tlsKey, configDir)
 		if err != nil {
 			log.Fatalf("TLS setup: %v", err)
 		}
