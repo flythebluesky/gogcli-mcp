@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"text/template"
 
 	"gogcli-mcp/pkg/mcpauth"
 )
@@ -122,13 +121,7 @@ func runSetup() {
 	}
 	fmt.Printf("\nConfig written to %s\n", cfgPath)
 
-	// Step 6: Install launchd service
-	if err := installLaunchd(configDir); err != nil {
-		fmt.Printf("Failed to install service: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Step 7: Print summary
+	// Step 6: Print summary
 	fmt.Println()
 	fmt.Println("\u2705 Setup complete!")
 	fmt.Println()
@@ -136,20 +129,19 @@ func runSetup() {
 	fmt.Printf("Client ID: %s\n", client.ID)
 	fmt.Printf("Secret:    %s\n", client.Secret)
 	fmt.Println()
+	fmt.Println("Start the server with:")
+	fmt.Println("  brew services start gogcli-mcp")
+	fmt.Println()
 	fmt.Println("To connect Claude Co-Work:")
 	fmt.Printf("  1. Go to Settings > Connectors > Add custom connector\n")
-	fmt.Printf("  2. Enter URL: %s\n", issuer)
+	fmt.Printf("  2. Enter URL: %s/mcp\n", issuer)
 	fmt.Println("  3. Click Advanced settings")
 	fmt.Println("  4. Paste the Client ID and Secret above")
 	fmt.Println("  5. Click Add")
 	fmt.Println("  6. Approve access in the browser when prompted")
 	fmt.Println()
-	fmt.Println("The server starts automatically on login. To check status:")
-	fmt.Println("  launchctl list | grep gogcli-mcp")
-	fmt.Println()
-	fmt.Println("Logs:")
-	fmt.Printf("  %s/stdout.log\n", configDir)
-	fmt.Printf("  %s/stderr.log\n", configDir)
+	fmt.Println("To check status:")
+	fmt.Println("  brew services info gogcli-mcp")
 }
 
 func checkGog() (string, error) {
@@ -179,87 +171,4 @@ func checkAccounts() ([]gogAccount, error) {
 		return nil, err
 	}
 	return result.Accounts, nil
-}
-
-var startShTmpl = template.Must(template.New("start.sh").Parse(`#!/bin/bash
-set -e
-
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-
-exec gogcli-mcp
-`))
-
-var plistTmpl = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.gogcli-mcp</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/bash</string>
-    <string>{{.ConfigDir}}/start.sh</string>
-  </array>
-  <key>KeepAlive</key>
-  <true/>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>{{.ConfigDir}}/stdout.log</string>
-  <key>StandardErrorPath</key>
-  <string>{{.ConfigDir}}/stderr.log</string>
-</dict>
-</plist>
-`))
-
-func installLaunchd(configDir string) error {
-	home, _ := os.UserHomeDir()
-
-	// Write start.sh
-	startSh := filepath.Join(configDir, "start.sh")
-	f, err := os.OpenFile(startSh, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0700)
-	if err != nil {
-		return err
-	}
-	if err := startShTmpl.Execute(f, nil); err != nil {
-		f.Close()
-		return fmt.Errorf("writing start.sh: %w", err)
-	}
-	f.Close()
-
-	// Write plist
-	plistDir := filepath.Join(home, "Library", "LaunchAgents")
-	os.MkdirAll(plistDir, 0755)
-	plistPath := filepath.Join(plistDir, "com.gogcli-mcp.plist")
-
-	// Unload existing service if present
-	exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d", os.Getuid()), plistPath).Run()
-
-	pf, err := os.Create(plistPath)
-	if err != nil {
-		return err
-	}
-	if err := plistTmpl.Execute(pf, map[string]string{
-		"ConfigDir": configDir,
-	}); err != nil {
-		pf.Close()
-		return fmt.Errorf("writing plist: %w", err)
-	}
-	pf.Close()
-
-	// Load service
-	fmt.Print("\nInstalling launchd service... ")
-	out, err := exec.Command("launchctl", "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plistPath).CombinedOutput()
-	if err != nil {
-		if strings.Contains(string(out), "already bootstrapped") {
-			exec.Command("launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/com.gogcli-mcp", os.Getuid())).Run()
-			fmt.Println("\u2713 restarted")
-		} else {
-			return fmt.Errorf("launchctl bootstrap: %s", string(out))
-		}
-	} else {
-		fmt.Println("\u2713 installed")
-	}
-
-	return nil
 }
